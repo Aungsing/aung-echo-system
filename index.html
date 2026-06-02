@@ -1,0 +1,1408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Echoes of the Ancient Forest</title>
+    <style>
+        :root {
+            --bg: #000010;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            overflow: hidden;
+            font-family: 'Georgia', 'Times New Roman', serif;
+            cursor: crosshair;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+            height: 100vh;
+            width: 100vw;
+            touch-action: none;
+        }
+
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        #overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 10;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            padding-bottom: 8vh;
+        }
+
+        #story-text {
+            color: #d4e8ff;
+            font-size: clamp(1.2rem, 2.5vw, 2rem);
+            text-align: center;
+            letter-spacing: 0.08em;
+            text-shadow: 0 0 40px rgba(140, 200, 255, 0.8), 0 0 80px rgba(100, 160, 255, 0.5),
+                0 0 120px rgba(60, 120, 220, 0.4);
+            transition: opacity 1.5s ease, transform 1.5s ease;
+            opacity: 0;
+            transform: translateY(20px);
+            max-width: 85vw;
+            line-height: 1.6;
+        }
+
+        #story-text.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        #hint {
+            position: fixed;
+            bottom: 4vh;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 11;
+            color: rgba(180, 210, 255, 0.7);
+            font-size: 0.85rem;
+            letter-spacing: 0.06em;
+            pointer-events: none;
+            transition: opacity 2s ease;
+            text-shadow: 0 0 20px rgba(130, 180, 240, 0.5);
+        }
+
+        #vignette {
+            position: fixed;
+            inset: 0;
+            z-index: 5;
+            pointer-events: none;
+            background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 15, 0.7) 85%, rgba(0, 0, 5, 0.9) 100%);
+        }
+
+        @media (max-width: 768px) {
+            #story-text {
+                font-size: 1rem;
+                letter-spacing: 0.05em;
+            }
+            #hint {
+                font-size: 0.7rem;
+                bottom: 3vh;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="vignette"></div>
+    <div id="overlay">
+        <div id="story-text"></div>
+    </div>
+    <div id="hint">Move your cursor to explore • Click near the ancient tree to awaken it</div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // ─────────────────────────────────────
+        // DOM ELEMENTS
+        // ─────────────────────────────────────
+        const storyText = document.getElementById('story-text');
+        const hintEl = document.getElementById('hint');
+        const overlay = document.getElementById('overlay');
+
+        // ─────────────────────────────────────
+        // SCENE SETUP
+        // ─────────────────────────────────────
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2('#0a0a1a', 0.00008);
+        scene.background = new THREE.Color('#030310');
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.5, 200);
+        camera.position.set(18, 7, 22);
+        camera.lookAt(0, 2, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.1;
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        document.body.appendChild(renderer.domElement);
+
+        // ─────────────────────────────────────
+        // POST PROCESSING
+        // ─────────────────────────────────────
+        const composer = new EffectComposer(renderer);
+        const renderPass = new RenderPass(scene, camera);
+        composer.addPass(renderPass);
+
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            0.7,
+            0.4,
+            0.2
+        );
+        bloomPass.threshold = 0.1;
+        bloomPass.strength = 0.9;
+        bloomPass.radius = 0.8;
+        composer.addPass(bloomPass);
+
+        // ─────────────────────────────────────
+        // LIGHTING
+        // ─────────────────────────────────────
+        const ambientLight = new THREE.AmbientLight('#1a2a40', 0.6);
+        scene.add(ambientLight);
+
+        const moonLight = new THREE.DirectionalLight('#c8d8f0', 2.5);
+        moonLight.position.set(30, 35, -10);
+        moonLight.castShadow = true;
+        moonLight.shadow.mapSize.width = 1024;
+        moonLight.shadow.mapSize.height = 1024;
+        moonLight.shadow.camera.near = 0.5;
+        moonLight.shadow.camera.far = 150;
+        moonLight.shadow.camera.left = -40;
+        moonLight.shadow.camera.right = 40;
+        moonLight.shadow.camera.top = 40;
+        moonLight.shadow.camera.bottom = -40;
+        moonLight.shadow.bias = -0.0003;
+        moonLight.shadow.normalBias = 0.02;
+        scene.add(moonLight);
+
+        const rimLight = new THREE.DirectionalLight('#8899cc', 1.2);
+        rimLight.position.set(-20, 10, -15);
+        scene.add(rimLight);
+
+        // ─────────────────────────────────────
+        // STARFIELD SKY DOME
+        // ─────────────────────────────────────
+        const skyDomeGeo = new THREE.SphereGeometry(80, 64, 40, 0, Math.PI * 2, 0, Math.PI * 0.55);
+        const skyDomeMat = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uColor1: { value: new THREE.Color('#0a0a20') },
+                uColor2: { value: new THREE.Color('#050518') },
+                uHorizonColor: { value: new THREE.Color('#0d0d2a') },
+            },
+            vertexShader: /* glsl */ `
+                varying vec3 vPos;
+                varying vec3 vNormal;
+                varying float vHeight;
+                void main() {
+                    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+                    vPos = worldPos.xyz;
+                    vNormal = normalize(mat3(modelMatrix) * normal);
+                    vHeight = position.y;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: /* glsl */ `
+                varying vec3 vPos;
+                varying vec3 vNormal;
+                varying float vHeight;
+                uniform float uTime;
+                uniform vec3 uColor1;
+                uniform vec3 uColor2;
+                uniform vec3 uHorizonColor;
+                float random(vec2 st) {
+                    return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+                }
+                void main() {
+                    float heightFactor = smoothstep(0.0, 1.0, vHeight / 35.0);
+                    vec3 baseColor = mix(uHorizonColor, uColor1, heightFactor);
+                    baseColor = mix(baseColor, uColor2, smoothstep(0.5, 1.0, heightFactor));
+                    // Stars
+                    vec2 starCoord = floor(vPos.xy * 3.5);
+                    float star = random(starCoord);
+                    float brightness = smoothstep(0.985, 1.0, star);
+                    brightness *= smoothstep(0.3, 0.85, heightFactor);
+                    brightness *= 0.7 + 0.3 * sin(uTime * 0.5 + star * 100.0);
+                    float twinkle = 0.5 + 0.5 * sin(uTime * 1.7 + star * 50.0);
+                    brightness *= 0.6 + 0.4 * twinkle;
+                    vec3 starColor = mix(vec3(0.8, 0.85, 1.0), vec3(1.0, 0.9, 0.7), random(starCoord + 0.5) * 0.4);
+                    vec3 finalColor = baseColor + starColor * brightness * 1.5;
+                    // Subtle nebula patches
+                    float nebula = smoothstep(0.4, 0.6, random(floor(vPos.xy * 0.8))) * 0.08;
+                    nebula *= smoothstep(0.4, 0.8, heightFactor);
+                    finalColor += vec3(0.15, 0.08, 0.25) * nebula;
+                    gl_FragColor = vec4(finalColor, 1.0);
+                }
+            `,
+            side: THREE.BackSide,
+            depthWrite: false,
+        });
+        const skyDome = new THREE.Mesh(skyDomeGeo, skyDomeMat);
+        skyDome.renderOrder = -10;
+        skyDome.material.depthTest = true;
+        scene.add(skyDome);
+
+        // ─────────────────────────────────────
+        // AURORA RIBBONS
+        // ─────────────────────────────────────
+        const auroraGroup = new THREE.Group();
+        scene.add(auroraGroup);
+
+        function createAuroraRibbon(radius, heightY, angleOffset, color1, color2) {
+            const segments = 80;
+            const points = [];
+            for (let i = 0; i <= segments; i++) {
+                const angle = (i / segments) * Math.PI * 0.7 + angleOffset;
+                const x = Math.cos(angle) * radius;
+                const z = Math.sin(angle) * radius * 0.6;
+                const y = heightY + Math.sin(i * 0.3) * 3;
+                points.push(new THREE.Vector3(x, y, z));
+            }
+            const curve = new THREE.CatmullRomCurve3(points);
+            const tubeGeo = new THREE.TubeGeometry(curve, 60, 0.4, 8, false);
+            const tubeMat = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uColor1: { value: new THREE.Color(color1) },
+                    uColor2: { value: new THREE.Color(color2) },
+                },
+                vertexShader: /* glsl */ `
+                    varying vec2 vUv;
+                    varying vec3 vPos;
+                    void main() {
+                        vUv = uv;
+                        vec4 worldPos = modelMatrix * vec4(position,1.0);
+                        vPos = worldPos.xyz;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+                    }
+                `,
+                fragmentShader: /* glsl */ `
+                    varying vec2 vUv;
+                    varying vec3 vPos;
+                    uniform float uTime;
+                    uniform vec3 uColor1;
+                    uniform vec3 uColor2;
+                    void main() {
+                        float alpha = smoothstep(0.0,0.25,vUv.x) * smoothstep(1.0,0.75,vUv.x);
+                        alpha *= smoothstep(0.0,0.3,vUv.y) * smoothstep(1.0,0.7,vUv.y);
+                        alpha *= 0.35;
+                        float shimmer = 0.7 + 0.3 * sin(vUv.x * 20.0 + uTime * 0.8) * sin(vUv.y * 8.0 - uTime * 0.5);
+                        vec3 col = mix(uColor1, uColor2, sin(vUv.x * 6.0 + uTime * 0.3) * 0.5 + 0.5);
+                        col *= shimmer;
+                        gl_FragColor = vec4(col, alpha);
+                    }
+                `,
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+            });
+            const ribbon = new THREE.Mesh(tubeGeo, tubeMat);
+            ribbon.renderOrder = 1;
+            return ribbon;
+        }
+
+        const auroraRibbons = [];
+        for (let i = 0; i < 5; i++) {
+            const ribbon = createAuroraRibbon(
+                35 + i * 3,
+                18 + i * 2.5,
+                i * 0.5,
+                i % 2 === 0 ? '#44ccaa' : '#66aadd',
+                i % 2 === 0 ? '#2288aa' : '#44bb99'
+            );
+            auroraGroup.add(ribbon);
+            auroraRibbons.push(ribbon);
+        }
+
+        // ─────────────────────────────────────
+        // GROUND TERRAIN
+        // ─────────────────────────────────────
+        const groundGroup = new THREE.Group();
+        scene.add(groundGroup);
+
+        const groundGeo = new THREE.CircleGeometry(30, 64);
+        const positions = groundGeo.attributes.position;
+        for (let i = 0; i < positions.count; i++) {
+            const x = positions.getX(i);
+            const y = positions.getY(i);
+            const dist = Math.sqrt(x * x + y * y);
+            const z = positions.getZ(i);
+            let height = 0;
+            height += Math.sin(x * 0.5) * Math.cos(y * 0.6) * 1.2;
+            height += Math.sin(x * 1.3 + y * 0.8) * 0.6;
+            height += Math.cos(y * 0.9 - x * 0.4) * 0.7;
+            height *= Math.max(0, 1 - (dist / 30) * 1.2);
+            height -= dist * 0.04;
+            if (dist < 3.5) height -= (3.5 - dist) * 0.5;
+            positions.setZ(i, height - 2.5);
+        }
+        groundGeo.computeVertexNormals();
+        const groundMat = new THREE.MeshStandardMaterial({
+            color: '#2a3520',
+            roughness: 0.85,
+            metalness: 0.05,
+            flatShading: false,
+        });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.receiveShadow = true;
+        ground.castShadow = true;
+        ground.position.y = 0;
+        groundGroup.add(ground);
+
+        // Moss patches on ground
+        const mossGeo = new THREE.CircleGeometry(28, 48);
+        const mossPositions = mossGeo.attributes.position;
+        for (let i = 0; i < mossPositions.count; i++) {
+            const x = mossPositions.getX(i);
+            const y = mossPositions.getY(i);
+            const dist = Math.sqrt(x * x + y * y);
+            const z = -2.48 + Math.sin(x * 0.5) * Math.cos(y * 0.6) * 1.2 + Math.sin(x * 1.3 + y * 0.8) * 0.6 - dist * 0.04;
+            mossPositions.setZ(i, z + 0.02);
+        }
+        mossGeo.computeVertexNormals();
+        const mossMat = new THREE.MeshStandardMaterial({
+            color: '#3d5a30',
+            roughness: 0.7,
+            metalness: 0.02,
+            transparent: true,
+            opacity: 0.5,
+            depthWrite: true,
+        });
+        const mossLayer = new THREE.Mesh(mossGeo, mossMat);
+        mossLayer.receiveShadow = true;
+        mossLayer.position.y = 0;
+        mossLayer.renderOrder = 0;
+        groundGroup.add(mossLayer);
+
+        // ─────────────────────────────────────
+        // REFLECTIVE POOL (Water around Tree)
+        // ─────────────────────────────────────
+        const poolGeo = new THREE.RingGeometry(3.2, 8, 64);
+        const poolPositions = poolGeo.attributes.position;
+        for (let i = 0; i < poolPositions.count; i++) {
+            poolPositions.setZ(i, -2.55);
+        }
+        poolGeo.computeVertexNormals();
+        const poolMat = new THREE.MeshStandardMaterial({
+            color: '#1a3050',
+            roughness: 0.15,
+            metalness: 0.6,
+            transparent: true,
+            opacity: 0.75,
+            depthWrite: true,
+        });
+        const pool = new THREE.Mesh(poolGeo, poolMat);
+        pool.receiveShadow = true;
+        pool.position.y = 0.03;
+        pool.renderOrder = 1;
+        groundGroup.add(pool);
+
+        // Inner glow ring on pool edge
+        const ringGeo = new THREE.TorusGeometry(5.6, 0.25, 16, 80);
+        const ringMat = new THREE.MeshStandardMaterial({
+            color: '#8899cc',
+            roughness: 0.3,
+            metalness: 0.2,
+            emissive: '#334466',
+            emissiveIntensity: 0.6,
+        });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = -2.4;
+        ring.receiveShadow = true;
+        groundGroup.add(ring);
+
+        // ─────────────────────────────────────
+        // ANCIENT STONES / RUINS
+        // ─────────────────────────────────────
+        function createAncientStone(x, z, scale, rotY) {
+            const group = new THREE.Group();
+            const h = scale * (2 + Math.random() * 3);
+            const geo = new THREE.CylinderGeometry(scale * 0.5, scale * 0.7, h, 7, 3);
+            // Distort vertices for weathered look
+            const pos = geo.attributes.position;
+            for (let i = 0; i < pos.count; i++) {
+                const px = pos.getX(i);
+                const py = pos.getY(i);
+                const pz = pos.getZ(i);
+                pos.setX(i, px + (Math.sin(py * 3) * 0.15 + Math.cos(pz * 5) * 0.1) * scale);
+                pos.setZ(i, pz + (Math.cos(py * 2.5) * 0.15 + Math.sin(px * 4) * 0.1) * scale);
+            }
+            geo.computeVertexNormals();
+            const mat = new THREE.MeshStandardMaterial({
+                color: '#5a5a55',
+                roughness: 0.75,
+                metalness: 0.1,
+                flatShading: true,
+            });
+            const stone = new THREE.Mesh(geo, mat);
+            stone.castShadow = true;
+            stone.receiveShadow = true;
+            stone.position.y = -2.5 + h / 2;
+            group.add(stone);
+
+            // Moss on stone
+            const mossStoneGeo = new THREE.SphereGeometry(scale * 0.5, 6, 4);
+            const mossStoneMat = new THREE.MeshStandardMaterial({
+                color: '#4a6a3a',
+                roughness: 0.6,
+                metalness: 0,
+                transparent: true,
+                opacity: 0.55,
+            });
+            const mossBlob = new THREE.Mesh(mossStoneGeo, mossStoneMat);
+            mossBlob.position.y = h / 2 - 0.3;
+            mossBlob.scale.set(1, 0.3, 0.8);
+            group.add(mossBlob);
+
+            group.position.set(x, 0, z);
+            group.rotation.y = rotY;
+            return group;
+        }
+
+        const ruinsGroup = new THREE.Group();
+        groundGroup.add(ruinsGroup);
+        const stoneConfigs = [
+            [8, -6, 1.8, 0.3],
+            [-7, -5, 1.5, 0.9],
+            [9, 7, 2.0, 2.1],
+            [-8, 8, 1.3, 1.5],
+            [12, -3, 1.1, 2.8],
+            [-10, -2, 1.6, 0.5],
+            [6, 10, 1.4, 1.8],
+            [-9, 6, 1.7, 2.4],
+            [3, -9, 1.2, 3.0],
+            [-4, -10, 1.5, 0.1],
+            [14, 4, 0.9, 1.2],
+            [-12, 3, 1.8, 2.7],
+            [10, -8, 1.3, 1.6],
+            [-6, -11, 1.0, 0.7],
+            [13, 8, 1.4, 3.1],
+            [-11, -7, 1.6, 1.9],
+        ];
+        stoneConfigs.forEach(([sx, sz, sc, sr]) => {
+            ruinsGroup.add(createAncientStone(sx, sz, sc, sr));
+        });
+
+        // ─────────────────────────────────────
+        // TREE GENERATION
+        // ─────────────────────────────────────
+        function createTree(x, z, height, trunkRadius, canopyColor, hasGlow) {
+            const group = new THREE.Group();
+
+            // Trunk
+            const trunkGeo = new THREE.CylinderGeometry(trunkRadius * 0.7, trunkRadius, height * 0.5, 10, 8);
+            const trunkPos = trunkGeo.attributes.position;
+            for (let i = 0; i < trunkPos.count; i++) {
+                const py = trunkPos.getY(i);
+                const px = trunkPos.getX(i);
+                const pz = trunkPos.getZ(i);
+                const angle = Math.atan2(pz, px);
+                const dist = Math.sqrt(px * px + pz * pz);
+                trunkPos.setX(i, px + Math.sin(py * 2.5 + angle) * dist * 0.2);
+                trunkPos.setZ(i, pz + Math.cos(py * 2.5 + angle) * dist * 0.2);
+            }
+            trunkGeo.computeVertexNormals();
+            const trunkMat = new THREE.MeshStandardMaterial({
+                color: '#4a3528',
+                roughness: 0.8,
+                metalness: 0.05,
+                flatShading: true,
+            });
+            const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+            trunk.castShadow = true;
+            trunk.receiveShadow = true;
+            trunk.position.y = -2.5 + height * 0.25;
+            group.add(trunk);
+
+            // Canopy layers
+            const canopyLayers = 3;
+            for (let l = 0; l < canopyLayers; l++) {
+                const canopyGeo = new THREE.SphereGeometry(height * 0.22 * (1 - l * 0.2), 10, 8);
+                const canopyPos = canopyGeo.attributes.position;
+                for (let i = 0; i < canopyPos.count; i++) {
+                    canopyPos.setX(i, canopyPos.getX(i) + (Math.random() - 0.5) * height * 0.1);
+                    canopyPos.setY(i, canopyPos.getY(i) + (Math.random() - 0.5) * height * 0.08);
+                    canopyPos.setZ(i, canopyPos.getZ(i) + (Math.random() - 0.5) * height * 0.1);
+                }
+                canopyGeo.computeVertexNormals();
+                const canopyMat = new THREE.MeshStandardMaterial({
+                    color: canopyColor,
+                    roughness: 0.55,
+                    metalness: 0.03,
+                    flatShading: true,
+                    emissive: hasGlow ? canopyColor : '#000000',
+                    emissiveIntensity: hasGlow ? 0.25 : 0,
+                });
+                const canopy = new THREE.Mesh(canopyGeo, canopyMat);
+                canopy.castShadow = true;
+                canopy.receiveShadow = true;
+                canopy.position.y = -2.5 + height * 0.5 + l * height * 0.12;
+                canopy.scale.set(1, 0.7, 1);
+                group.add(canopy);
+            }
+
+            group.position.set(x, 0, z);
+            group.rotation.y = Math.random() * Math.PI * 2;
+            group.scale.setScalar(0.85 + Math.random() * 0.3);
+            return group;
+        }
+
+        const treesGroup = new THREE.Group();
+        groundGroup.add(treesGroup);
+
+        const treeConfigs = [
+            [5, 4, 5, 0.35, '#2d5a1e', false],
+            [-4, 3, 6, 0.4, '#1e4a15', false],
+            [7, -3, 4.5, 0.3, '#336622', true],
+            [-5, -4, 5.5, 0.38, '#254d18', false],
+            [3, 7, 5.2, 0.33, '#2a5519', true],
+            [-6, 5, 6.2, 0.42, '#1f4a14', false],
+            [8, 2, 4, 0.28, '#3a5e25', false],
+            [-3, -6, 5.8, 0.36, '#285420', true],
+            [6, 6, 4.8, 0.31, '#2e5822', false],
+            [-7, -2, 5.3, 0.37, '#1d4518', false],
+            [9, -5, 4.3, 0.29, '#356028', true],
+            [-8, 0, 5.7, 0.4, '#224a16', false],
+            [2, -7, 5.1, 0.34, '#2b531d', false],
+            [-2, 8, 4.6, 0.32, '#305c24', true],
+            [11, 1, 3.8, 0.27, '#3d6530', false],
+            [-9, -6, 5.4, 0.39, '#1e4215', false],
+            [4, -8, 4.9, 0.3, '#29551e', true],
+            [-10, 4, 4.2, 0.28, '#336028', false],
+            [10, 6, 3.5, 0.25, '#3a5a2a', false],
+            [-4, -9, 5.6, 0.41, '#204716', false],
+        ];
+        treeConfigs.forEach(([tx, tz, th, tr, tc, tg]) => {
+            treesGroup.add(createTree(tx, tz, th, tr, tc, tg));
+        });
+
+        // ─────────────────────────────────────
+        // THE TREE OF MEMORIES (Center)
+        // ─────────────────────────────────────
+        const treeOfMemories = new THREE.Group();
+        scene.add(treeOfMemories);
+        treeOfMemories.position.set(0, 0, 0);
+
+        // Massive trunk
+        const totemTrunkGeo = new THREE.CylinderGeometry(0.6, 1.6, 14, 20, 12);
+        const ttp = totemTrunkGeo.attributes.position;
+        for (let i = 0; i < ttp.count; i++) {
+            const py = ttp.getY(i);
+            const px = ttp.getX(i);
+            const pz = ttp.getZ(i);
+            const angle = Math.atan2(pz, px);
+            const dist = Math.sqrt(px * px + pz * pz);
+            const twist = py * 0.35;
+            ttp.setX(i, px + Math.sin(py * 1.8 + angle + twist) * dist * 0.35);
+            ttp.setZ(i, pz + Math.cos(py * 1.8 + angle + twist) * dist * 0.35);
+        }
+        totemTrunkGeo.computeVertexNormals();
+        const totemTrunkMat = new THREE.MeshStandardMaterial({
+            color: '#3d2817',
+            roughness: 0.7,
+            metalness: 0.08,
+            flatShading: true,
+        });
+        const totemTrunk = new THREE.Mesh(totemTrunkGeo, totemTrunkMat);
+        totemTrunk.castShadow = true;
+        totemTrunk.receiveShadow = true;
+        totemTrunk.position.y = -2.5 + 7;
+        treeOfMemories.add(totemTrunk);
+
+        // Glowing veins on trunk
+        const veinGroup = new THREE.Group();
+        treeOfMemories.add(veinGroup);
+        for (let v = 0; v < 8; v++) {
+            const veinCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0, -2.3 + v * 0.2, 1.5),
+                new THREE.Vector3(0.4, -1 + v * 0.4, 1.3),
+                new THREE.Vector3(-0.3, 1.5 + v * 0.3, 1.0),
+                new THREE.Vector3(0.5, 3.5 + v * 0.35, 0.8),
+                new THREE.Vector3(-0.2, 6 + v * 0.25, 0.5),
+                new THREE.Vector3(0.3, 8.5 + v * 0.2, 0.2),
+            ]);
+            const veinGeo = new THREE.TubeGeometry(veinCurve, 30, 0.08, 6, false);
+            const veinMat = new THREE.MeshStandardMaterial({
+                color: '#88ccff',
+                roughness: 0.2,
+                metalness: 0.1,
+                emissive: '#4499dd',
+                emissiveIntensity: 1.5,
+            });
+            const vein = new THREE.Mesh(veinGeo, veinMat);
+            vein.rotation.y = (v / 8) * Math.PI * 2;
+            veinGroup.add(vein);
+        }
+
+        // Major branches
+        for (let b = 0; b < 6; b++) {
+            const branchGroup = new THREE.Group();
+            const angle = (b / 6) * Math.PI * 2 + Math.random() * 0.3;
+            const branchLen = 3 + Math.random() * 3;
+            const branchGeo = new THREE.CylinderGeometry(0.15, 0.35, branchLen, 8, 6);
+            const branchMat = new THREE.MeshStandardMaterial({
+                color: '#4a3020',
+                roughness: 0.75,
+                metalness: 0.05,
+                flatShading: true,
+            });
+            const branch = new THREE.Mesh(branchGeo, branchMat);
+            branch.castShadow = true;
+            branch.receiveShadow = true;
+            branch.position.y = branchLen / 2;
+            branchGroup.add(branch);
+            branchGroup.position.y = 6 + Math.random() * 3;
+            branchGroup.rotation.z = 0.6 + Math.random() * 0.7;
+            branchGroup.rotation.y = angle;
+            treeOfMemories.add(branchGroup);
+
+            // Sub-branch canopy
+            const subCanopyGeo = new THREE.SphereGeometry(1.2 + Math.random(), 8, 6);
+            const subCanopyMat = new THREE.MeshStandardMaterial({
+                color: '#1a3d28',
+                roughness: 0.5,
+                metalness: 0.02,
+                emissive: '#1a3320',
+                emissiveIntensity: 0.4,
+                flatShading: true,
+            });
+            const subCanopy = new THREE.Mesh(subCanopyGeo, subCanopyMat);
+            subCanopy.position.copy(branchGroup.position);
+            subCanopy.position.y += branchLen;
+            subCanopy.position.x += Math.cos(angle) * branchLen * 0.7;
+            subCanopy.position.z += Math.sin(angle) * branchLen * 0.7;
+            subCanopy.scale.set(1, 0.6, 1);
+            treeOfMemories.add(subCanopy);
+        }
+
+        // Top canopy
+        const topCanopyGeo = new THREE.SphereGeometry(4.5, 16, 12);
+        const tcp = topCanopyGeo.attributes.position;
+        for (let i = 0; i < tcp.count; i++) {
+            tcp.setX(i, tcp.getX(i) + (Math.random() - 0.5) * 1.5);
+            tcp.setY(i, tcp.getY(i) + (Math.random() - 0.5) * 1.2);
+            tcp.setZ(i, tcp.getZ(i) + (Math.random() - 0.5) * 1.5);
+        }
+        topCanopyGeo.computeVertexNormals();
+        const topCanopyMat = new THREE.MeshStandardMaterial({
+            color: '#152d1f',
+            roughness: 0.45,
+            metalness: 0.03,
+            emissive: '#1a3525',
+            emissiveIntensity: 0.5,
+            flatShading: true,
+        });
+        const topCanopy = new THREE.Mesh(topCanopyGeo, topCanopyMat);
+        topCanopy.castShadow = true;
+        topCanopy.receiveShadow = true;
+        topCanopy.position.y = 10;
+        topCanopy.scale.set(1, 0.65, 1);
+        treeOfMemories.add(topCanopy);
+
+        const topCanopy2 = new THREE.Mesh(
+            new THREE.SphereGeometry(3.2, 12, 8),
+            topCanopyMat.clone()
+        );
+        topCanopy2.position.y = 11.5;
+        topCanopy2.scale.set(1, 0.55, 1);
+        topCanopy2.castShadow = true;
+        treeOfMemories.add(topCanopy2);
+
+        // Tree core glow
+        const coreGeo = new THREE.SphereGeometry(0.8, 16, 12);
+        const coreMat = new THREE.MeshStandardMaterial({
+            color: '#ffffff',
+            roughness: 0.1,
+            metalness: 0,
+            emissive: '#ccddff',
+            emissiveIntensity: 3,
+        });
+        const core = new THREE.Mesh(coreGeo, coreMat);
+        core.position.y = 1.5;
+        core.scale.set(1, 1.4, 1);
+        treeOfMemories.add(core);
+
+        // Roots spreading on ground
+        for (let r = 0; r < 10; r++) {
+            const angle = (r / 10) * Math.PI * 2;
+            const rootLen = 3 + Math.random() * 5;
+            const rootCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0, -2.4, 1.2),
+                new THREE.Vector3(Math.cos(angle) * 1.5, -2.5, Math.sin(angle) * 1.5 + 0.8),
+                new THREE.Vector3(Math.cos(angle) * rootLen, -2.6, Math.sin(angle) * rootLen),
+            ]);
+            const rootGeo = new THREE.TubeGeometry(rootCurve, 20, 0.2 + Math.random() * 0.35, 7, false);
+            const rootMat = new THREE.MeshStandardMaterial({
+                color: '#4a3020',
+                roughness: 0.7,
+                metalness: 0.05,
+                flatShading: true,
+                emissive: '#221008',
+                emissiveIntensity: 0.2,
+            });
+            const root = new THREE.Mesh(rootGeo, rootMat);
+            root.castShadow = true;
+            root.receiveShadow = true;
+            treeOfMemories.add(root);
+        }
+
+        // ─────────────────────────────────────
+        // FLOATING ISLANDS
+        // ─────────────────────────────────────
+        const floatingIslandsGroup = new THREE.Group();
+        scene.add(floatingIslandsGroup);
+
+        function createFloatingIsland(x, y, z, size) {
+            const group = new THREE.Group();
+            const topGeo = new THREE.CylinderGeometry(size * 0.9, size, size * 0.7, 14, 3);
+            const topPos = topGeo.attributes.position;
+            for (let i = 0; i < topPos.count; i++) {
+                topPos.setX(i, topPos.getX(i) + (Math.random() - 0.5) * size * 0.3);
+                topPos.setZ(i, topPos.getZ(i) + (Math.random() - 0.5) * size * 0.3);
+            }
+            topGeo.computeVertexNormals();
+            const topMat = new THREE.MeshStandardMaterial({
+                color: '#4a5a35',
+                roughness: 0.6,
+                metalness: 0.04,
+                flatShading: true,
+            });
+            const topMesh = new THREE.Mesh(topGeo, topMat);
+            topMesh.castShadow = true;
+            topMesh.receiveShadow = true;
+            group.add(topMesh);
+
+            const bottomGeo = new THREE.CylinderGeometry(size, size * 1.2, size * 0.6, 12, 3);
+            const bottomMat = new THREE.MeshStandardMaterial({
+                color: '#5a4a35',
+                roughness: 0.75,
+                metalness: 0.06,
+                flatShading: true,
+            });
+            const bottomMesh = new THREE.Mesh(bottomGeo, bottomMat);
+            bottomMesh.position.y = -size * 0.5;
+            bottomMesh.castShadow = true;
+            group.add(bottomMesh);
+
+            // Roots hanging
+            for (let i = 0; i < 4; i++) {
+                const rootHangGeo = new THREE.CylinderGeometry(0.08, 0.15, size * 0.8, 5, 3);
+                const rootHang = new THREE.Mesh(rootHangGeo, bottomMat);
+                rootHang.position.y = -size * 0.8;
+                rootHang.position.x = (Math.random() - 0.5) * size * 0.6;
+                rootHang.position.z = (Math.random() - 0.5) * size * 0.6;
+                rootHang.rotation.z = (Math.random() - 0.5) * 0.5;
+                rootHang.rotation.x = (Math.random() - 0.5) * 0.5;
+                group.add(rootHang);
+            }
+
+            // Small tree on top
+            if (size > 1.5) {
+                const miniTree = createTree(0, 0, size * 1.2, size * 0.15, '#2d5a1e', true);
+                miniTree.position.y = size * 0.3;
+                group.add(miniTree);
+            }
+
+            group.position.set(x, y, z);
+            group.rotation.y = Math.random() * Math.PI * 2;
+            return group;
+        }
+
+        const islandConfigs = [
+            [10, 7, -8, 2.2],
+            [-9, 5, 7, 1.8],
+            [13, 8, 3, 2.5],
+            [-11, 6, -5, 2.0],
+            [7, 9, 10, 1.6],
+            [-8, 7, -9, 2.3],
+            [14, 5, 9, 1.9],
+            [-13, 8, 0, 2.1],
+        ];
+        islandConfigs.forEach(([ix, iy, iz, is]) => {
+            floatingIslandsGroup.add(createFloatingIsland(ix, iy, iz, is));
+        });
+
+        // ─────────────────────────────────────
+        // PARTICLE SYSTEMS
+        // ─────────────────────────────────────
+        const particleGroups = {};
+
+        // Fireflies
+        function createFireflies(count) {
+            const geo = new THREE.BufferGeometry();
+            const positionsArr = new Float32Array(count * 3);
+            const colorsArr = new Float32Array(count * 3);
+            const sizesArr = new Float32Array(count);
+            const data = [];
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const radius = 2 + Math.random() * 22;
+                const x = Math.cos(angle) * radius;
+                const z = Math.sin(angle) * radius;
+                const y = -1.5 + Math.random() * 8;
+                positionsArr[i * 3] = x;
+                positionsArr[i * 3 + 1] = y;
+                positionsArr[i * 3 + 2] = z;
+                const colorChoice = Math.random();
+                colorsArr[i * 3] = colorChoice < 0.5 ? 0.7 : 0.9;
+                colorsArr[i * 3 + 1] = colorChoice < 0.5 ? 0.9 : 0.75;
+                colorsArr[i * 3 + 2] = 0.4 + Math.random() * 0.4;
+                sizesArr[i] = 0.06 + Math.random() * 0.2;
+                data.push({
+                    baseX: x,
+                    baseY: y,
+                    baseZ: z,
+                    phase: Math.random() * Math.PI * 2,
+                    speed: 0.3 + Math.random() * 0.9,
+                    amplitude: 0.5 + Math.random() * 2.5,
+                    wanderPhase: Math.random() * Math.PI * 2,
+                    wanderSpeed: 0.2 + Math.random() * 0.5,
+                });
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(positionsArr, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colorsArr, 3));
+            geo.setAttribute('size', new THREE.BufferAttribute(sizesArr, 1));
+            const mat = new THREE.PointsMaterial({
+                size: 0.15,
+                vertexColors: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                transparent: true,
+                opacity: 0.85,
+            });
+            const points = new THREE.Points(geo, mat);
+            points.renderOrder = 10;
+            return { points, data, geo };
+        }
+
+        const firefliesSystem = createFireflies(250);
+        scene.add(firefliesSystem.points);
+        particleGroups.fireflies = firefliesSystem;
+
+        // Memory Orbs (orbiting Tree of Memories)
+        function createMemoryOrbs(count) {
+            const geo = new THREE.BufferGeometry();
+            const positionsArr = new Float32Array(count * 3);
+            const colorsArr = new Float32Array(count * 3);
+            const data = [];
+            for (let i = 0; i < count; i++) {
+                const orbitRadius = 2.5 + Math.random() * 7;
+                const orbitAngle = Math.random() * Math.PI * 2;
+                const orbitHeight = -1 + Math.random() * 13;
+                const orbitSpeed = 0.15 + Math.random() * 0.55;
+                const verticalPhase = Math.random() * Math.PI * 2;
+                positionsArr[i * 3] = Math.cos(orbitAngle) * orbitRadius;
+                positionsArr[i * 3 + 1] = orbitHeight;
+                positionsArr[i * 3 + 2] = Math.sin(orbitAngle) * orbitRadius;
+                colorsArr[i * 3] = 0.5 + Math.random() * 0.5;
+                colorsArr[i * 3 + 1] = 0.6 + Math.random() * 0.4;
+                colorsArr[i * 3 + 2] = 0.8 + Math.random() * 0.2;
+                data.push({
+                    orbitRadius,
+                    orbitAngle,
+                    orbitHeight,
+                    orbitSpeed,
+                    verticalPhase,
+                    verticalAmp: 0.5 + Math.random() * 2,
+                });
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(positionsArr, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colorsArr, 3));
+            const mat = new THREE.PointsMaterial({
+                size: 0.22,
+                vertexColors: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                transparent: true,
+                opacity: 0.9,
+            });
+            const points = new THREE.Points(geo, mat);
+            points.renderOrder = 9;
+            return { points, data, geo };
+        }
+
+        const memoryOrbsSystem = createMemoryOrbs(120);
+        treeOfMemories.add(memoryOrbsSystem.points);
+        particleGroups.memoryOrbs = memoryOrbsSystem;
+
+        // Falling Leaves
+        function createFallingLeaves(count) {
+            const geo = new THREE.BufferGeometry();
+            const positionsArr = new Float32Array(count * 3);
+            const colorsArr = new Float32Array(count * 3);
+            const data = [];
+            for (let i = 0; i < count; i++) {
+                const x = (Math.random() - 0.5) * 35;
+                const y = 3 + Math.random() * 16;
+                const z = (Math.random() - 0.5) * 35;
+                positionsArr[i * 3] = x;
+                positionsArr[i * 3 + 1] = y;
+                positionsArr[i * 3 + 2] = z;
+                const leafType = Math.random();
+                colorsArr[i * 3] = leafType < 0.3 ? 0.9 : leafType < 0.6 ? 0.7 : 0.5;
+                colorsArr[i * 3 + 1] = leafType < 0.3 ? 0.4 : leafType < 0.6 ? 0.6 : 0.3;
+                colorsArr[i * 3 + 2] = 0.1 + Math.random() * 0.2;
+                data.push({
+                    baseX: x,
+                    baseY: y,
+                    baseZ: z,
+                    fallSpeed: 0.3 + Math.random() * 1.2,
+                    driftAmp: 0.5 + Math.random() * 2,
+                    driftPhase: Math.random() * Math.PI * 2,
+                    driftSpeed: 0.3 + Math.random() * 0.7,
+                    resetY: 3 + Math.random() * 16,
+                    groundY: -2.5 + Math.random() * 0.5,
+                });
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(positionsArr, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colorsArr, 3));
+            const mat = new THREE.PointsMaterial({
+                size: 0.18,
+                vertexColors: true,
+                blending: THREE.NormalBlending,
+                depthWrite: true,
+                transparent: true,
+                opacity: 0.8,
+            });
+            const points = new THREE.Points(geo, mat);
+            points.renderOrder = 5;
+            return { points, data, geo };
+        }
+
+        const leavesSystem = createFallingLeaves(200);
+        scene.add(leavesSystem.points);
+        particleGroups.leaves = leavesSystem;
+
+        // Butterflies
+        function createButterflies(count) {
+            const geo = new THREE.BufferGeometry();
+            const positionsArr = new Float32Array(count * 3);
+            const colorsArr = new Float32Array(count * 3);
+            const data = [];
+            for (let i = 0; i < count; i++) {
+                const x = (Math.random() - 0.5) * 28;
+                const y = 0.5 + Math.random() * 10;
+                const z = (Math.random() - 0.5) * 28;
+                positionsArr[i * 3] = x;
+                positionsArr[i * 3 + 1] = y;
+                positionsArr[i * 3 + 2] = z;
+                colorsArr[i * 3] = 0.3 + Math.random() * 0.7;
+                colorsArr[i * 3 + 1] = 0.4 + Math.random() * 0.5;
+                colorsArr[i * 3 + 2] = 0.6 + Math.random() * 0.4;
+                data.push({
+                    baseX: x,
+                    baseY: y,
+                    baseZ: z,
+                    phase: Math.random() * Math.PI * 2,
+                    speed: 0.4 + Math.random() * 1.2,
+                    radius: 1.5 + Math.random() * 5,
+                    verticalSpeed: 0.2 + Math.random() * 0.6,
+                    verticalAmp: 0.8 + Math.random() * 3,
+                });
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(positionsArr, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colorsArr, 3));
+            const mat = new THREE.PointsMaterial({
+                size: 0.25,
+                vertexColors: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                transparent: true,
+                opacity: 0.7,
+            });
+            const points = new THREE.Points(geo, mat);
+            points.renderOrder = 8;
+            return { points, data, geo };
+        }
+
+        const butterfliesSystem = createButterflies(60);
+        scene.add(butterfliesSystem.points);
+        particleGroups.butterflies = butterfliesSystem;
+
+        // Energy particles (for activation)
+        function createEnergyParticles(count) {
+            const geo = new THREE.BufferGeometry();
+            const positionsArr = new Float32Array(count * 3);
+            const colorsArr = new Float32Array(count * 3);
+            const velocitiesArr = new Float32Array(count * 3);
+            const data = [];
+            for (let i = 0; i < count; i++) {
+                positionsArr[i * 3] = 0;
+                positionsArr[i * 3 + 1] = -2;
+                positionsArr[i * 3 + 2] = 0;
+                colorsArr[i * 3] = 0.7;
+                colorsArr[i * 3 + 1] = 0.8;
+                colorsArr[i * 3 + 2] = 1.0;
+                velocitiesArr[i * 3] = (Math.random() - 0.5) * 3;
+                velocitiesArr[i * 3 + 1] = 2 + Math.random() * 8;
+                velocitiesArr[i * 3 + 2] = (Math.random() - 0.5) * 3;
+                data.push({
+                    life: 1,
+                    decay: 0.003 + Math.random() * 0.015,
+                });
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(positionsArr, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colorsArr, 3));
+            const mat = new THREE.PointsMaterial({
+                size: 0.3,
+                vertexColors: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                transparent: true,
+                opacity: 1,
+            });
+            const points = new THREE.Points(geo, mat);
+            points.renderOrder = 15;
+            points.visible = false;
+            return { points, data, geo, velocities: velocitiesArr, active: false };
+        }
+
+        const energySystem = createEnergyParticles(600);
+        scene.add(energySystem.points);
+        particleGroups.energy = energySystem;
+
+        // ─────────────────────────────────────
+        // INTERACTION STATE
+        // ─────────────────────────────────────
+        const state = {
+            activationTriggered: false,
+            activationProgress: 0,
+            activationStartTime: 0,
+            cameraTarget: new THREE.Vector3(0, 3, 0),
+            cameraLookTarget: new THREE.Vector3(0, 4, 0),
+            mouseX: 0,
+            mouseY: 0,
+            targetMouseX: 0,
+            targetMouseY: 0,
+            time: 0,
+            storyPhase: 0,
+            storyTimer: 0,
+        };
+
+        // ─────────────────────────────────────
+        // RAYCASTER FOR CLICK DETECTION
+        // ─────────────────────────────────────
+        const raycaster = new THREE.Raycaster();
+        raycaster.far = 50;
+
+        function getTreeInteractionZone() {
+            const zone = new THREE.Mesh(
+                new THREE.SphereGeometry(7, 8, 6),
+                new THREE.MeshBasicMaterial({ visible: false, transparent: true, opacity: 0 })
+            );
+            zone.position.copy(treeOfMemories.position);
+            zone.position.y += 3;
+            zone.name = 'treeZone';
+            return zone;
+        }
+        const treeZone = getTreeInteractionZone();
+        scene.add(treeZone);
+
+        // ─────────────────────────────────────
+        // EVENT HANDLERS
+        // ─────────────────────────────────────
+        window.addEventListener('mousemove', (e) => {
+            state.targetMouseX = (e.clientX / window.innerWidth) * 2 - 1;
+            state.targetMouseY = -(e.clientY / window.innerHeight) * 2 + 1;
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            if (e.touches.length > 0) {
+                state.targetMouseX = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
+                state.targetMouseY = -(e.touches[0].clientY / window.innerHeight) * 2 + 1;
+            }
+        }, { passive: true });
+
+        window.addEventListener('click', (e) => {
+            if (state.activationTriggered) return;
+            const mouse = new THREE.Vector2(
+                (e.clientX / window.innerWidth) * 2 - 1,
+                -(e.clientY / window.innerHeight) * 2 + 1
+            );
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(treeZone);
+            if (intersects.length > 0 && !state.activationTriggered) {
+                triggerActivation();
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // ─────────────────────────────────────
+        // ACTIVATION SEQUENCE
+        // ─────────────────────────────────────
+        function triggerActivation() {
+            if (state.activationTriggered) return;
+            state.activationTriggered = true;
+            state.activationStartTime = performance.now() * 0.001;
+            state.activationProgress = 0;
+            energySystem.points.visible = true;
+            energySystem.active = true;
+            hintEl.style.opacity = '0';
+            showStoryText('The Tree of Memories awakens...');
+            setTimeout(() => {
+                showStoryText('Memories rise like stars...');
+            }, 4000);
+            setTimeout(() => {
+                showStoryText('The cosmos blooms within the ancient wood...');
+            }, 8000);
+            setTimeout(() => {
+                showStoryText('Every leaf remembers.<br>Every star remembers.<br>Everything is connected.');
+                hintEl.style.opacity = '0';
+            }, 13000);
+            setTimeout(() => {
+                hintEl.textContent = 'Thank you for visiting the Ancient Forest';
+                hintEl.style.opacity = '0.8';
+            }, 18000);
+        }
+
+        function showStoryText(text) {
+            storyText.innerHTML = text;
+            storyText.classList.add('visible');
+            clearTimeout(state._storyTimeout);
+            state._storyTimeout = setTimeout(() => {
+                storyText.classList.remove('visible');
+            }, 5000);
+        }
+
+        // ─────────────────────────────────────
+        // ANIMATION LOOP
+        // ─────────────────────────────────────
+        const clock = new THREE.Clock();
+
+        function animate(timestamp) {
+            requestAnimationFrame(animate);
+
+            const dt = Math.min(clock.getDelta(), 0.1);
+            const time = timestamp * 0.001;
+            state.time = time;
+
+            // Smooth mouse follow
+            state.mouseX += (state.targetMouseX - state.mouseX) * 2.5 * dt;
+            state.mouseY += (state.targetMouseY - state.mouseY) * 2.5 * dt;
+
+            // Update camera target based on mouse
+            const baseLookX = state.mouseX * 6;
+            const baseLookY = 3 + state.mouseY * 3;
+            state.cameraLookTarget.lerp(
+                new THREE.Vector3(baseLookX, baseLookY, state.mouseX * 3),
+                0.8 * dt
+            );
+
+            // Activation camera movement
+            if (state.activationTriggered) {
+                const elapsed = time - state.activationStartTime;
+                state.activationProgress = Math.min(1, elapsed / 16);
+                const prog = state.activationProgress;
+                const pullBack = prog * 15;
+                const riseUp = prog * 10;
+                const targetPos = new THREE.Vector3(
+                    Math.sin(prog * Math.PI * 0.5) * 8,
+                    3 + riseUp,
+                    18 + pullBack
+                );
+                state.cameraTarget.lerp(targetPos, 1.2 * dt);
+                state.cameraLookTarget.lerp(
+                    new THREE.Vector3(0, 5 + prog * 8, 0),
+                    1.0 * dt
+                );
+            } else {
+                const defaultTarget = new THREE.Vector3(
+                    state.mouseX * 4,
+                    2.5 + state.mouseY * 2,
+                    20
+                );
+                state.cameraTarget.lerp(defaultTarget, 0.6 * dt);
+            }
+
+            camera.position.lerp(state.cameraTarget, 0.5 * dt);
+            camera.lookAt(state.cameraLookTarget);
+
+            // ── Update sky dome ──
+            skyDomeMat.uniforms.uTime.value = time;
+
+            // ── Update aurora ──
+            auroraRibbons.forEach((ribbon, i) => {
+                ribbon.material.uniforms.uTime.value = time;
+                ribbon.rotation.y += dt * 0.03 * (i + 1) * 0.3;
+                ribbon.position.y += Math.sin(time * 0.3 + i) * dt * 0.4;
+            });
+
+            // ── Tree of Memories breathing ──
+            const breathe = 1 + Math.sin(time * 0.6) * 0.03 + Math.sin(time * 0.9) * 0.02;
+            treeOfMemories.scale.setScalar(breathe);
+            core.material.emissiveIntensity = 3 + Math.sin(time * 1.3) * 1.2 + Math.sin(time * 2.1) * 0.6;
+            if (state.activationTriggered && state.activationProgress > 0.3) {
+                core.material.emissiveIntensity = 8 + Math.sin(time * 4) * 3;
+                core.scale.setScalar(1 + state.activationProgress * 3);
+            }
+
+            // ── Update fireflies ──
+            const ffPositions = firefliesSystem.geo.attributes.position.array;
+            const ffData = firefliesSystem.data;
+            for (let i = 0; i < ffData.length; i++) {
+                const d = ffData[i];
+                const wanderX = Math.sin(time * d.wanderSpeed + d.wanderPhase) * d.amplitude;
+                const wanderZ = Math.cos(time * d.wanderSpeed + d.wanderPhase + 1.3) * d.amplitude;
+                const wanderY = Math.sin(time * d.speed + d.phase) * d.amplitude * 0.6;
+                ffPositions[i * 3] = d.baseX + wanderX;
+                ffPositions[i * 3 + 1] = d.baseY + wanderY;
+                ffPositions[i * 3 + 2] = d.baseZ + wanderZ;
+            }
+            firefliesSystem.geo.attributes.position.needsUpdate = true;
+
+            // ── Update memory orbs ──
+            const moPositions = memoryOrbsSystem.geo.attributes.position.array;
+            const moData = memoryOrbsSystem.data;
+            for (let i = 0; i < moData.length; i++) {
+                const d = moData[i];
+                d.orbitAngle += d.orbitSpeed * dt;
+                const yOffset = Math.sin(time * 0.7 + d.verticalPhase) * d.verticalAmp;
+                moPositions[i * 3] = Math.cos(d.orbitAngle) * d.orbitRadius;
+                moPositions[i * 3 + 1] = d.orbitHeight + yOffset;
+                moPositions[i * 3 + 2] = Math.sin(d.orbitAngle) * d.orbitRadius;
+            }
+            memoryOrbsSystem.geo.attributes.position.needsUpdate = true;
+
+            // ── Update falling leaves ──
+            const lfPositions = leavesSystem.geo.attributes.position.array;
+            const lfData = leavesSystem.data;
+            for (let i = 0; i < lfData.length; i++) {
+                const d = lfData[i];
+                let y = lfPositions[i * 3 + 1] - d.fallSpeed * dt;
+                if (y < d.groundY) y = d.resetY;
+                const driftX = Math.sin(time * d.driftSpeed + d.driftPhase) * d.driftAmp * dt;
+                const driftZ = Math.cos(time * d.driftSpeed + d.driftPhase + 1) * d.driftAmp * dt;
+                lfPositions[i * 3] += driftX;
+                lfPositions[i * 3 + 1] = y;
+                lfPositions[i * 3 + 2] += driftZ;
+                if (Math.abs(lfPositions[i * 3]) > 20) lfPositions[i * 3] = (Math.random() - 0.5) * 35;
+                if (Math.abs(lfPositions[i * 3 + 2]) > 20) lfPositions[i * 3 + 2] = (Math.random() - 0.5) * 35;
+            }
+            leavesSystem.geo.attributes.position.needsUpdate = true;
+
+            // ── Update butterflies ──
+            const bfPositions = butterfliesSystem.geo.attributes.position.array;
+            const bfData = butterfliesSystem.data;
+            for (let i = 0; i < bfData.length; i++) {
+                const d = bfData[i];
+                const angle = time * d.speed + d.phase;
+                bfPositions[i * 3] = d.baseX + Math.cos(angle) * d.radius;
+                bfPositions[i * 3 + 1] = d.baseY + Math.sin(time * d.verticalSpeed + d.phase) * d.verticalAmp;
+                bfPositions[i * 3 + 2] = d.baseZ + Math.sin(angle) * d.radius;
+            }
+            butterfliesSystem.geo.attributes.position.needsUpdate = true;
+
+            // ── Update energy particles ──
+            if (energySystem.active && energySystem.points.visible) {
+                const enPositions = energySystem.geo.attributes.position.array;
+                const enVelocities = energySystem.velocities;
+                const enData = energySystem.data;
+                let allDead = true;
+                for (let i = 0; i < enData.length; i++) {
+                    if (enData[i].life > 0) {
+                        allDead = false;
+                        enData[i].life -= enData[i].decay * (1 + state.activationProgress * 2);
+                        enPositions[i * 3] += enVelocities[i * 3] * dt;
+                        enPositions[i * 3 + 1] += enVelocities[i * 3 + 1] * dt * (1 + state.activationProgress);
+                        enPositions[i * 3 + 2] += enVelocities[i * 3 + 2] * dt;
+                        enVelocities[i * 3 + 1] += 0.5 * dt;
+                        if (enData[i].life <= 0) {
+                            enPositions[i * 3 + 1] = -999;
+                        }
+                    }
+                }
+                energySystem.geo.attributes.position.needsUpdate = true;
+                energySystem.points.material.opacity = Math.min(1, state.activationProgress * 2);
+                if (allDead && state.activationProgress > 0.8 && enData[0].life <= 0) {
+                    // Respawn wave
+                    for (let i = 0; i < enData.length; i++) {
+                        if (Math.random() < 0.3) {
+                            enData[i].life = 1;
+                            enPositions[i * 3] = (Math.random() - 0.5) * 2;
+                            enPositions[i * 3 + 1] = -1 + Math.random() * 10;
+                            enPositions[i * 3 + 2] = (Math.random() - 0.5) * 2;
+                            enVelocities[i * 3] = (Math.random() - 0.5) * 6;
+                            enVelocities[i * 3 + 1] = 3 + Math.random() * 12;
+                            enVelocities[i * 3 + 2] = (Math.random() - 0.5) * 6;
+                        }
+                    }
+                }
+            }
+
+            // ── Pool shimmer ──
+            pool.material.emissiveIntensity = 0.3 + Math.sin(time * 1.5) * 0.15;
+            pool.material.opacity = 0.7 + Math.sin(time * 0.8) * 0.05;
+
+            // ── Ground ring pulse ──
+            ring.material.emissiveIntensity = 0.4 + Math.sin(time * 1.2) * 0.3;
+            if (state.activationTriggered) {
+                ring.material.emissiveIntensity = 1.5 + Math.sin(time * 3) * 0.8;
+                ring.scale.setScalar(1 + state.activationProgress * 2);
+            }
+
+            // ── Floating islands gentle bob ──
+            floatingIslandsGroup.children.forEach((island, i) => {
+                island.position.y += Math.sin(time * 0.5 + i * 1.3) * dt * 0.3;
+            });
+
+            // ── Bloom intensity during activation ──
+            if (state.activationTriggered) {
+                bloomPass.strength = 0.9 + state.activationProgress * 2.5;
+                renderer.toneMappingExposure = 1.1 + state.activationProgress * 0.8;
+            } else {
+                bloomPass.strength += (0.9 - bloomPass.strength) * dt * 2;
+                renderer.toneMappingExposure += (1.1 - renderer.toneMappingExposure) * dt * 2;
+            }
+
+            // ── Render ──
+            composer.render();
+        }
+
+        // ─────────────────────────────────────
+        // INITIAL STORY TEXT
+        // ─────────────────────────────────────
+        setTimeout(() => {
+            showStoryText('The forest sleeps in silence...<br>waiting to be remembered.');
+        }, 2000);
+        setTimeout(() => {
+            hintEl.style.opacity = '0.8';
+        }, 5000);
+
+        // ─────────────────────────────────────
+        // START
+        // ─────────────────────────────────────
+        requestAnimationFrame(animate);
+
+        console.log('%c🌳 Echoes of the Ancient Forest %cawakened.',
+            'font-size:1.4em;color:#8cf;', 'color:#aaa;');
+        console.log('%cMove your cursor • Click near the great tree • Discover the memories',
+            'color:#cce;font-style:italic;');
+        console.log('%c"Every leaf remembers. Every star remembers. Everything is connected."',
+            'color:#adf;font-size:1.1em;');
+    </script>
+</body>
+</html>
